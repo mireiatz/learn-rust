@@ -4,11 +4,6 @@ use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-enum MemoryOperation {
-    Read(u64),
-    Write(u64),
-    InstructionLoad(u64),
-}
 
 struct Block {
     tag: u64,
@@ -55,15 +50,8 @@ fn parse_args(args: &[String]) -> (Cache, usize, usize, usize, String, bool) {
 
     // loop through and handle parsed options
     let mut opts = getopt::Parser::new(args, "hv:s:E:b:t:");
-println!("Parsed options:");
-for opt in &mut opts {
-    match opt.unwrap() {
-        Opt(opt_char, opt_val) => {
-            println!("Option: {}, Value: {:?}", opt_char, opt_val);
-        }
-    }
-}
-for opt in &mut opts {
+
+    while let Some(opt) = opts.next() {
         match opt.unwrap() {
             Opt('h', _) => {
                 println!("Usage: path_to_cache_simulator [-hv] -s <num> -E <num> -b <num> -t <file>");
@@ -95,23 +83,29 @@ for opt in &mut opts {
     (cache, s, E, b, t, v)
 }
 
-fn read_trace_file(filename: &str) -> Result<Vec<MemoryOperation>, std::io::Error> {
-    let file = File::open(filename)?;
+fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
+    // open and retrieve data from file
+    let file_path = format!("../{}", filename);
+    let file = File::open(&file_path)?;
     let reader = BufReader::new(file);
 
+    // initialise vector for memory operations
     let mut memory_accesses = Vec::new();
 
+    // loop through file lines
     for line in reader.lines() {
         if let Ok(line) = line {
+
+            // separate parts in each line
             let parts: Vec<&str> = line.split_whitespace().collect();
+
+            //parse parts
             if parts.len() >= 2 {
-                let operation = match parts[0] {
-                    "I" => MemoryOperation::InstructionLoad(parts[1].parse().unwrap()),
-                    "R" => MemoryOperation::Read(parts[1].parse().unwrap()),
-                    "W" => MemoryOperation::Write(parts[1].parse().unwrap()),
-                    _ => continue, 
-                };
-                memory_accesses.push(operation);
+                // ignore instruction accesses
+                if parts[0] != "I" {
+                    // store the memory address
+                    memory_accesses.push(parts[1].to_string());
+                }
             }
         }
     }
@@ -136,17 +130,11 @@ pub fn main() {
         println!("Verbose mode enabled.");
     }
 
-    match read_trace_file(&t) {
+    match read_tracefile(&t) {
         Ok(memory_accesses) => {
             println!("Memory accesses:");
-            for operation in &memory_accesses {
-                match operation {
-                    MemoryOperation::Read(address) => println!("Read: {}", address),
-                    MemoryOperation::Write(address) => println!("Write: {}", address),
-                    MemoryOperation::InstructionLoad(address) => {
-                        println!("Instruction Load: {}", address)
-                    }
-                }
+            for address in &memory_accesses {
+                println!("{}", address);
             }
         }
         Err(err) => eprintln!("Error reading trace file: {}", err),
