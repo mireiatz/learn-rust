@@ -2,24 +2,16 @@ extern crate getopt;
 use getopt::Opt;
 use std::env;
 
-pub fn main() {
-    // collect command line arguments
-    let args: Vec<String> = env::args().collect();
-
-    // create parser
-    let mut opts = getopt::Parser::new(&args, "hv:s:E:b:t:");
-
-    // initialise variables
+fn parse_args(args: &[String]) -> (usize, usize, usize, String, bool) {
     let mut s = 0;
     let mut E = 0;
     let mut b = 0;
     let mut t = String::new();
     let mut v = false;
 
-    // loop through parsed options
+    // loop through and handle parsed options
+    let mut opts = getopt::Parser::new(args, "hv:s:E:b:t:");
     for opt in &mut opts {
-
-        // handle different options
         match opt.unwrap() {
             Opt('h', _) => {
                 println!("Usage: path_to_cache_simulator [-hv] -s <num> -E <num> -b <num> -t <file>");
@@ -33,7 +25,7 @@ pub fn main() {
                 println!("\nExamples:");
                 println!("  linux>  ./sim-ref -s 4 -E 1 -b 4 -t traces/yi.trace");
                 println!("  linux>  ./sim-ref -v -s 8 -E 2 -b 4 -t traces/yi.trace");
-                return;
+                std::process::exit(0);
             }
             Opt('v', _) => {
                 v = true;
@@ -45,7 +37,13 @@ pub fn main() {
             _ => {}
         }
     }
-    
+    (s, E, b, t, v)
+}
+
+pub fn main() {
+    let args: Vec<String> = env::args().collect();
+    let (s, E, b, t, v) = parse_args(&args);
+
     // Print cache parameters
     println!("s: {}", s);
     println!("E: {}", E);
