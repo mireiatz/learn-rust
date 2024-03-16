@@ -2,6 +2,43 @@ extern crate getopt;
 use getopt::Opt;
 use std::env;
 
+struct Block {
+    tag: u64,
+    valid: bool,
+}
+
+struct Line {
+    blocks: Vec<Block>,
+}
+
+struct Set {
+    lines: Vec<Line>,
+}
+
+struct Cache {
+    sets: Vec<Set>,
+}
+
+impl Cache {
+    // initialize the cache
+    fn new(s: usize, e: usize, b: usize) -> Cache {
+        let mut sets = Vec::with_capacity(2_usize.pow(s as u32));
+        for _ in 0..2_usize.pow(s as u32) {
+            let mut lines = Vec::with_capacity(e);
+            for _ in 0..e {
+                let mut blocks = Vec::with_capacity(1);
+                blocks.push(Block {
+                    tag: 0,
+                    valid: false,
+                });
+                lines.push(Line { blocks });
+            }
+            sets.push(Set { lines });
+        }
+        Cache { sets }
+    }
+}
+
 fn parse_args(args: &[String]) -> (usize, usize, usize, String, bool) {
     let mut s = 0;
     let mut E = 0;
