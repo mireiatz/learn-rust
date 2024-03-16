@@ -22,6 +22,12 @@ struct Cache {
     sets: Vec<Set>,
 }
 
+struct CacheStats {
+    hits: usize,
+    misses: usize,
+    evictions: usize,
+}
+
 impl Cache {
     fn new(s: usize, e: usize, b: usize) -> Cache {
         let mut sets = Vec::with_capacity(2_usize.pow(s as u32));
@@ -38,6 +44,32 @@ impl Cache {
             sets.push(Set { lines });
         }
         Cache { sets }
+    }
+}
+
+impl CacheStats {
+    fn new() -> Self {
+        CacheStats {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+        }
+    }
+
+    fn increment_hits(&mut self) {
+        self.hits += 1;
+    }
+
+    fn increment_misses(&mut self) {
+        self.misses += 1;
+    }
+
+    fn increment_evictions(&mut self) {
+        self.evictions += 1;
+    }
+
+    fn print(&self) {
+        println!("hits:{}, misses:{}, evictions:{}", self.hits, self.misses, self.evictions);
     }
 }
 
@@ -116,19 +148,10 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
 }
 
 fn extract_address_parts(address: &str, s: usize, b: usize) -> (usize, usize, usize) {
-    println!("Address: {}", address);
-
     let address = u64::from_str_radix(address, 16).unwrap();
-    println!("Hexadecimal Address: {:x}", address);
-
     let block_offset = (address & ((1 << b) - 1)) as usize;
-    println!("Block Offset: {}", block_offset);
-
     let set_index = ((address >> b) & ((1 << s) - 1)) as usize;
-    println!("Set Index: {}", set_index);
-
     let tag = (address >> (s + b)) as usize;
-    println!("Tag: {}", tag);
 
     (tag, set_index, block_offset)
 }
@@ -150,6 +173,8 @@ pub fn main() {
         println!("Verbose mode enabled.");
     }
 
+    let mut cache_stats = CacheStats::new();
+
     match read_tracefile(&t) {
         Ok(memory_accesses) => {
             println!("Memory accesses:");
@@ -157,15 +182,45 @@ pub fn main() {
                 let (tag, set_index, block_offset) = extract_address_parts(address, s, b);
                 println!("Tag: {}, Set Index: {}, Block Offset: {}", tag, set_index, block_offset);
 
-                let line = &mut cache.sets[set_index].lines[0]; 
-                let block = &mut line.blocks[0]; 
-                if block.valid && block.tag == tag {
+                let set = &mut cache.sets[set_index];
+
+                let mut found_empty_block = false;
+                let mut evicted_block_index = 0;
+
+                for (i, line) in set.lines.iter_mut().enumerate() {
+                    let block = &mut line.blocks[0];
+                    if !block.valid {
+                        // load data into empty block
+                        block.tag = tag;
+                        block.valid = true;
+                        found_empty_block = true;
+                        break;
+                    } else {
+                        // implement eviction policy 
+                        evicted_block_index = i;
+                    }
+                }
+            
+                if !found_empty_block {
+                    // evict the block 
+                    let evicted_block = &mut set.lines[evicted_block_index].blocks[0];
+                    evicted_block.tag = tag;
+                    evicted_block.valid = true;
+                    cache_stats.increment_evictions();
+                }
+            
+                if found_empty_block {
                     println!("Cache hit");
+                    cache_stats.increment_hits();
                 } else {
                     println!("Cache miss");
+                    cache_stats.increment_misses();
                 }
             }
         }
         Err(err) => eprintln!("Error reading trace file: {}", err),
     }
+
+    cache_stats.print();
+
 }
