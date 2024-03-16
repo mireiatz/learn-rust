@@ -1,6 +1,14 @@
 extern crate getopt;
 use getopt::Opt;
 use std::env;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+
+enum MemoryOperation {
+    Read(u64),
+    Write(u64),
+    InstructionLoad(u64),
+}
 
 struct Block {
     tag: u64,
@@ -36,20 +44,6 @@ impl Cache {
         }
         Cache { sets }
     }
-
-    fn print_cache(&self) {
-        println!("Cache contents:");
-        for (set_index, set) in self.sets.iter().enumerate() {
-            for (line_index, line) in set.lines.iter().enumerate() {
-                for (block_index, block) in line.blocks.iter().enumerate() {
-                    println!(
-                        "Set: {}, Line: {}, Block: {}, Tag: {}, Valid: {}",
-                        set_index, line_index, block_index, block.tag, block.valid
-                    );
-                }
-            }
-        }
-    }
 }
 
 fn parse_args(args: &[String]) -> (Cache, usize, usize, usize, String, bool) {
@@ -61,8 +55,15 @@ fn parse_args(args: &[String]) -> (Cache, usize, usize, usize, String, bool) {
 
     // loop through and handle parsed options
     let mut opts = getopt::Parser::new(args, "hv:s:E:b:t:");
-
-    while let Some(opt) = opts.next() {
+println!("Parsed options:");
+for opt in &mut opts {
+    match opt.unwrap() {
+        Opt(opt_char, opt_val) => {
+            println!("Option: {}, Value: {:?}", opt_char, opt_val);
+        }
+    }
+}
+for opt in &mut opts {
         match opt.unwrap() {
             Opt('h', _) => {
                 println!("Usage: path_to_cache_simulator [-hv] -s <num> -E <num> -b <num> -t <file>");
@@ -87,13 +88,35 @@ fn parse_args(args: &[String]) -> (Cache, usize, usize, usize, String, bool) {
             Opt('t', Some(val)) => t = val,
             _ => {}
         }
-
-
     }
 
-    // Initialize the cache
+    // initialize the cache
     let cache = Cache::new(s, E, b); 
     (cache, s, E, b, t, v)
+}
+
+fn read_trace_file(filename: &str) -> Result<Vec<MemoryOperation>, std::io::Error> {
+    let file = File::open(filename)?;
+    let reader = BufReader::new(file);
+
+    let mut memory_accesses = Vec::new();
+
+    for line in reader.lines() {
+        if let Ok(line) = line {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let operation = match parts[0] {
+                    "I" => MemoryOperation::InstructionLoad(parts[1].parse().unwrap()),
+                    "R" => MemoryOperation::Read(parts[1].parse().unwrap()),
+                    "W" => MemoryOperation::Write(parts[1].parse().unwrap()),
+                    _ => continue, 
+                };
+                memory_accesses.push(operation);
+            }
+        }
+    }
+
+    Ok(memory_accesses)
 }
 
 pub fn main() {
@@ -113,6 +136,19 @@ pub fn main() {
         println!("Verbose mode enabled.");
     }
 
-    // print cache
-    cache.print_cache();
+    match read_trace_file(&t) {
+        Ok(memory_accesses) => {
+            println!("Memory accesses:");
+            for operation in &memory_accesses {
+                match operation {
+                    MemoryOperation::Read(address) => println!("Read: {}", address),
+                    MemoryOperation::Write(address) => println!("Write: {}", address),
+                    MemoryOperation::InstructionLoad(address) => {
+                        println!("Instruction Load: {}", address)
+                    }
+                }
+            }
+        }
+        Err(err) => eprintln!("Error reading trace file: {}", err),
+    }
 }
