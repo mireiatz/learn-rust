@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 
 
 struct Block {
-    tag: u64,
+    tag: usize,
     valid: bool,
 }
 
@@ -103,8 +103,10 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
             if parts.len() >= 2 {
                 // ignore instruction accesses
                 if parts[0] != "I" {
-                    // store the memory address
-                    memory_accesses.push(parts[1].to_string());
+                    let address_parts: Vec<&str> = parts[1].split(',').collect();
+                    if address_parts.len() >= 1 {
+                        memory_accesses.push(address_parts[0].to_string());
+                    }
                 }
             }
         }
@@ -113,12 +115,30 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
     Ok(memory_accesses)
 }
 
+fn extract_address_parts(address: &str, s: usize, b: usize) -> (usize, usize, usize) {
+    println!("Address: {}", address);
+
+    let address = u64::from_str_radix(address, 16).unwrap();
+    println!("Hexadecimal Address: {:x}", address);
+
+    let block_offset = (address & ((1 << b) - 1)) as usize;
+    println!("Block Offset: {}", block_offset);
+
+    let set_index = ((address >> b) & ((1 << s) - 1)) as usize;
+    println!("Set Index: {}", set_index);
+
+    let tag = (address >> (s + b)) as usize;
+    println!("Tag: {}", tag);
+
+    (tag, set_index, block_offset)
+}
+
 pub fn main() {
     // collect command line arguments
     let args: Vec<String> = env::args().collect();
 
     // run parser
-    let (cache, s, E, b, t, v) = parse_args(&args);
+    let (mut cache, s, E, b, t, v) = parse_args(&args);
 
     // print parameters
     println!("s: {}", s);
@@ -134,7 +154,16 @@ pub fn main() {
         Ok(memory_accesses) => {
             println!("Memory accesses:");
             for address in &memory_accesses {
-                println!("{}", address);
+                let (tag, set_index, block_offset) = extract_address_parts(address, s, b);
+                println!("Tag: {}, Set Index: {}, Block Offset: {}", tag, set_index, block_offset);
+
+                let line = &mut cache.sets[set_index].lines[0]; 
+                let block = &mut line.blocks[0]; 
+                if block.valid && block.tag == tag {
+                    println!("Cache hit");
+                } else {
+                    println!("Cache miss");
+                }
             }
         }
         Err(err) => eprintln!("Error reading trace file: {}", err),
