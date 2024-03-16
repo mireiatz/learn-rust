@@ -20,7 +20,6 @@ struct Cache {
 }
 
 impl Cache {
-    // initialize the cache
     fn new(s: usize, e: usize, b: usize) -> Cache {
         let mut sets = Vec::with_capacity(2_usize.pow(s as u32));
         for _ in 0..2_usize.pow(s as u32) {
@@ -37,9 +36,23 @@ impl Cache {
         }
         Cache { sets }
     }
+
+    fn print_cache(&self) {
+        println!("Cache contents:");
+        for (set_index, set) in self.sets.iter().enumerate() {
+            for (line_index, line) in set.lines.iter().enumerate() {
+                for (block_index, block) in line.blocks.iter().enumerate() {
+                    println!(
+                        "Set: {}, Line: {}, Block: {}, Tag: {}, Valid: {}",
+                        set_index, line_index, block_index, block.tag, block.valid
+                    );
+                }
+            }
+        }
+    }
 }
 
-fn parse_args(args: &[String]) -> (usize, usize, usize, String, bool) {
+fn parse_args(args: &[String]) -> (Cache, usize, usize, usize, String, bool) {
     let mut s = 0;
     let mut E = 0;
     let mut b = 0;
@@ -48,7 +61,8 @@ fn parse_args(args: &[String]) -> (usize, usize, usize, String, bool) {
 
     // loop through and handle parsed options
     let mut opts = getopt::Parser::new(args, "hv:s:E:b:t:");
-    for opt in &mut opts {
+
+    while let Some(opt) = opts.next() {
         match opt.unwrap() {
             Opt('h', _) => {
                 println!("Usage: path_to_cache_simulator [-hv] -s <num> -E <num> -b <num> -t <file>");
@@ -73,15 +87,23 @@ fn parse_args(args: &[String]) -> (usize, usize, usize, String, bool) {
             Opt('t', Some(val)) => t = val,
             _ => {}
         }
+
+
     }
-    (s, E, b, t, v)
+
+    // Initialize the cache
+    let cache = Cache::new(s, E, b); 
+    (cache, s, E, b, t, v)
 }
 
 pub fn main() {
+    // collect command line arguments
     let args: Vec<String> = env::args().collect();
-    let (s, E, b, t, v) = parse_args(&args);
 
-    // Print cache parameters
+    // run parser
+    let (cache, s, E, b, t, v) = parse_args(&args);
+
+    // print parameters
     println!("s: {}", s);
     println!("E: {}", E);
     println!("b: {}", b);
@@ -90,4 +112,7 @@ pub fn main() {
     if v {
         println!("Verbose mode enabled.");
     }
+
+    // print cache
+    cache.print_cache();
 }
