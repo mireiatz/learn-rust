@@ -16,6 +16,11 @@ struct Set {
 struct Cache {
     sets: Vec<Set>,
 }
+struct CacheStats {
+    hits: usize,
+    misses: usize,
+    evictions: usize,
+}
 
 impl Cache {
     fn new(s: usize, e: usize) -> Cache {
@@ -31,6 +36,32 @@ impl Cache {
             sets.push(Set { lines });
         }
         Cache { sets }
+    }
+}
+
+impl CacheStats {
+    fn new() -> CacheStats {
+        CacheStats {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+        }
+    }
+
+    fn record_hit(&mut self) {
+        self.hits += 1;
+    }
+
+    fn record_miss(&mut self) {
+        self.misses += 1;
+    }
+
+    fn record_eviction(&mut self) {
+        self.evictions += 1;
+    }
+
+    fn print_stats(&self) {
+        println!("hits:{} misses:{} evictions:{}", self.hits, self.misses, self.evictions);
     }
 }
 
@@ -76,8 +107,9 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
     Ok(memory_accesses)
 }
 
-fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Option<(usize, usize)> {
+fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Option<(usize, usize, char)> {
     let memory_access_parts: Vec<&str> = memory_access.split_whitespace().collect();
+    let operation = memory_access_parts[0].chars().next().unwrap();
 
     if memory_access_parts.len() >= 2 && memory_access_parts[0] != "I" {
         let address_size_parts: Vec<&str> = memory_access_parts[1].split(',').collect();
@@ -89,62 +121,77 @@ fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Option<(usize
             let tag = usize::from_str_radix(&binary_address[..tag_index_start], 2).unwrap();
             let set_index = usize::from_str_radix(&binary_address[tag_index_start..set_index_start], 2).unwrap();
 
-            return Some((set_index, tag));
+            return Some((set_index, tag, operation));
         }
     }
 
     None
 }
 
-fn simulate_cache_access(cache: &mut Cache, set_index: usize, tag: usize) -> (bool, bool) {
-    println!("Starting simulation for set_index: {}, tag: {}", set_index, tag);
+fn simulate_cache_access(cache: &mut Cache, stats: &mut CacheStats, operation: char, set_index: usize, tag: usize) {
+    match operation {
+        'L' | 'S' => {
+            println!("Starting simulation for operation: {}, set_index: {}, tag: {}", operation, set_index, tag);
 
-    // Check for hit or empty line
-    let mut found_empty_line = false;
-    let mut evict_index: Option<usize> = None;
+            // Check for hit or empty line
+            let mut found_empty_line = false;
+            let mut evict_index: Option<usize> = None;
 
-    // Access the lines directly using indexing
-    for index in 0..cache.sets[set_index].lines.len() {
-        println!("Checking line {}", index);
-        let line = &mut cache.sets[set_index].lines[index]; // Borrow the line here
-        if let Some(line_tag) = line.tag {
-            println!("Line tag found: {}", line_tag);
-            if line_tag == tag {
-                // Hit, no eviction
-                println!("Hit! No eviction needed.");
-                line.last_used += 1;
+            // Access the lines directly using indexing
+            for index in 0..cache.sets[set_index].lines.len() {
+                // Check if line is empty or has the same tag
+                if let Some(line_tag) = cache.sets[set_index].lines[index].tag {
+                    if line_tag == tag {
+                        // Hit, no eviction
+                        println!("Hit! No eviction needed.");
+                        stats.record_hit();
+                        cache.sets[set_index].lines[index].last_used += 1;
+                        return;
+                    }
+                } else {
+                    // Found an empty line
+                    println!("Empty line found, setting tag: {}", tag);
+                    cache.sets[set_index].lines[index].tag = Some(tag);
+                    cache.sets[set_index].lines[index].last_used = 0;
+                    found_empty_line = true;
+                }
 
-                return (true, false);
+                // Find eviction candidate
+                if evict_index.is_none() || cache.sets[set_index].lines[index].last_used > cache.sets[set_index].lines[evict_index.unwrap()].last_used {
+                    evict_index = Some(index);
+                }
             }
-        } else {
-            // Found an empty line
-            println!("Empty line found, setting tag: {}", tag);
-            line.tag = Some(tag);
-            line.last_used = 0;
-            found_empty_line = true;
-        }
 
-        // Find eviction candidate
-        if evict_index.is_none() || line.last_used > cache.sets[set_index].lines[evict_index.unwrap()].last_used {
-            evict_index = Some(index);
+            // If no hit and no empty line, evict LRU line
+            if !found_empty_line {
+                if let Some(evict_index) = evict_index {
+                    println!("Evicting line at index: {}", evict_index);
+                    cache.sets[set_index].lines[evict_index].tag = Some(tag);
+                    cache.sets[set_index].lines[evict_index].last_used = 0;
+                    println!("Miss with eviction.");
+                    stats.record_miss();
+                    stats.record_eviction();
+                    return;
+                }
+            }
+
+            println!("Miss without eviction.");
+            stats.record_miss();
+        }
+        'M' => {
+             // Load followed by Store (read-modify-write)
+             println!("Starting simulation for Modify operation: set_index: {}, tag: {}", set_index, tag);
+
+             // Simulate Load
+             simulate_cache_access(cache, stats, 'L', set_index, tag);
+ 
+             // Simulate Store
+             simulate_cache_access(cache, stats, 'S', set_index, tag);
+        }
+        _ => {
+            eprintln!("Unknown operation: {}", operation);
         }
     }
-
-    // If no hit and no empty line, evict LRU line
-    if !found_empty_line {
-        println!("No hit and no empty line.");
-        if let Some(evict_index) = evict_index {
-            println!("Evicting line at index: {}", evict_index);
-            cache.sets[set_index].lines[evict_index].tag = Some(tag);
-            cache.sets[set_index].lines[evict_index].last_used = 0;
-            println!("Miss with eviction.");
-
-            return (false, true); // Miss, eviction
-        }
-    }
-
-    println!("Miss without eviction.");
-    (false, false) // Miss without eviction
 }
 
 pub fn main() {
@@ -157,32 +204,20 @@ pub fn main() {
     // initialize the cache
     let mut cache = Cache::new(s, E);
 
+    let mut stats= CacheStats::new();
+
     match read_tracefile(&t) {
         Ok(memory_accesses) => {
-            // Initialize counters
-            let mut hits = 0;
-            let mut misses = 0;
-            let mut evictions = 0;
             for address in &memory_accesses {
                 // Simulate cache behavior for each memory access
-                if let Some((set_index, tag)) = parse_memory_access(address, s, b) {
+                if let Some((set_index, tag, operation)) = parse_memory_access(address, s, b) {
                     // Simulate cache behavior for each memory access
-                    let (hit, eviction) = simulate_cache_access(&mut cache, set_index, tag);
-                    if hit {
-                        hits += 1;
-                    } else {
-                        misses += 1;
-                        if eviction {
-                            evictions += 1;
-                        }
-                    }
-                } else {
-                    eprintln!("Error parsing memory access: {}", address);
+                    simulate_cache_access(&mut cache, &mut stats, operation, set_index, tag);
                 }
             }
 
             // Print results
-            println!("hits: {} misses: {} evictions: {}", hits, misses, evictions);
+            stats.print_stats();
         }
         Err(err) => eprintln!("Error reading trace file: {}", err),
     }
