@@ -6,16 +6,17 @@ use std::io::{BufRead, BufReader};
 
 struct Line {
     tag: Option<usize>,
-    last_used: usize,
 }
 
 struct Set {
     lines: Vec<Line>,
+    lru_list: Vec<usize>,
 }
 
 struct Cache {
     sets: Vec<Set>,
 }
+
 struct CacheStats {
     hits: usize,
     misses: usize,
@@ -29,12 +30,12 @@ impl Cache {
         for _ in 0..2usize.pow(s as u32) {
             let mut lines = Vec::with_capacity(e);
             for _ in 0..e {
-                lines.push(Line {
-                    tag: None,
-                    last_used: 0,
-                });
+                lines.push(Line { tag: None });
             }
-            sets.push(Set { lines });
+            sets.push(Set {
+                lines: lines,
+                lru_list: vec![0],
+            });
         }
         Cache { sets }
     }
@@ -126,6 +127,17 @@ fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Option<(usize
     }
     None
 }
+// Update the LRU list based on the accessed index
+fn update_lru_list(cache: &mut Cache, set_index: usize, accessed_index: usize) {
+    if let Some(position) = cache.sets[set_index]
+        .lru_list
+        .iter()
+        .position(|&i| i == accessed_index)
+    {
+        cache.sets[set_index].lru_list.remove(position);
+    }
+    cache.sets[set_index].lru_list.push(accessed_index);
+}
 
 // Apply cache simulation logic based on operation and update cache and statistics
 fn simulate_cache_access(
@@ -138,45 +150,35 @@ fn simulate_cache_access(
     match operation {
         'L' | 'S' => {
             let mut found_empty_line = false;
-            let mut evict_index: Option<usize> = None;
 
             for index in 0..cache.sets[set_index].lines.len() {
                 if let Some(line_tag) = cache.sets[set_index].lines[index].tag {
                     // If the line is not empty, compare the tags - if they match, it's a hit
                     if line_tag == tag {
-                        cache.sets[set_index].lines[index].last_used += 1; // Update last used value for LRU eviction policy purposes
                         stats.record_hit();
+                        update_lru_list(cache, set_index, index);
                         return;
                     }
                 } else {
                     // If the line is empty, update its values
                     cache.sets[set_index].lines[index].tag = Some(tag); // Set the tag
-                    cache.sets[set_index].lines[index].last_used = 0; // Update last used value for LRU eviction policy purposes
                     found_empty_line = true;
-                }
-
-                // Find eviction candidate
-                if evict_index.is_none()
-                    || cache.sets[set_index].lines[index].last_used
-                        > cache.sets[set_index].lines[evict_index.unwrap()].last_used
-                {
-                    evict_index = Some(index);
+                    stats.record_miss();
+                    update_lru_list(cache, set_index, index);
+                    break;
                 }
             }
 
             // If no hit happened and no empty line was found, evict the LRU line
             if !found_empty_line {
-                if let Some(evict_index) = evict_index {
+                if let Some(evict_index) = cache.sets[set_index].lru_list.first().cloned() {
                     cache.sets[set_index].lines[evict_index].tag = Some(tag); // Set the tag
-                    cache.sets[set_index].lines[evict_index].last_used = 0; // Update last used value for LRU eviction policy purposes
                     stats.record_miss();
                     stats.record_eviction();
-                    return;
+                    update_lru_list(cache, set_index, evict_index);
                 }
+                return;
             }
-
-            // If no hit or eviction happened, then it's a miss
-            stats.record_miss();
         }
         'M' => {
             // Simulate L operation followed by S operation
@@ -194,7 +196,7 @@ pub fn main() {
     let args: Vec<String> = env::args().collect();
     let (s, e, b, t) = parse_args(&args);
 
-    // Initialize the cache and stats
+    // Initialize the cache, stats and counter
     let mut cache = Cache::new(s, e);
     let mut stats = CacheStats::new();
 
