@@ -5,13 +5,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 
-struct Block {
-    tag: usize,
-    valid: bool,
-}
-
+#[derive(Clone)]
 struct Line {
-    blocks: Vec<Block>,
+    tag: Option<usize>,
+    last_used: usize,
 }
 
 struct Set {
@@ -22,60 +19,17 @@ struct Cache {
     sets: Vec<Set>,
 }
 
-struct CacheStats {
-    hits: usize,
-    misses: usize,
-    evictions: usize,
-    cache_actions: Vec<String>,
-}
-
 impl Cache {
-    fn new(s: usize, e: usize, b: usize) -> Cache {
-        let mut sets = Vec::with_capacity(2_usize.pow(s as u32));
-        for _ in 0..2_usize.pow(s as u32) {
+    fn new(s: usize, e: usize) -> Cache {
+        let mut sets = Vec::with_capacity(2usize.pow(s as u32));
+        for _ in 0..2usize.pow(s as u32) {
             let mut lines = Vec::with_capacity(e);
             for _ in 0..e {
-                let mut blocks = Vec::with_capacity(1);
-                blocks.push(Block {
-                    tag: 0,
-                    valid: false,
-                });
-                lines.push(Line { blocks });
+                lines.push(Line { tag: None, last_used: 0 });
             }
             sets.push(Set { lines });
         }
         Cache { sets }
-    }
-}
-
-impl CacheStats {
-    fn new() -> Self {
-        CacheStats {
-            hits: 0,
-            misses: 0,
-            evictions: 0,
-            cache_actions: Vec::new(),
-        }
-    }
-
-    fn increment_hits(&mut self) {
-        self.hits += 1;
-    }
-
-    fn increment_misses(&mut self) {
-        self.misses += 1;
-    }
-
-    fn increment_evictions(&mut self) {
-        self.evictions += 1;
-    }
-
-    fn record_cache_action(&mut self, action: &str) {
-        self.cache_actions.push(action.to_string());
-    }
-
-    fn print(&self) {
-        println!("hits:{}, misses:{}, evictions:{}", self.hits, self.misses, self.evictions);
     }
 }
 
@@ -114,7 +68,6 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
     // loop through file lines
     for line in reader.lines() {
         if let Ok(line) = line {
-
             memory_accesses.push(line);
         }
     }
@@ -122,71 +75,67 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
     Ok(memory_accesses)
 }
 
-fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Option<(char, String, usize, usize, usize, usize)> {
-
+fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Option<(usize, usize)> {
      let memory_access_parts: Vec<&str> = memory_access.split_whitespace().collect();
-     let operation = memory_access_parts[0].chars().next().unwrap();
 
      if memory_access_parts.len() >= 2 && memory_access_parts[0] != "I" {
         let address_size_parts: Vec<&str> = memory_access_parts[1].split(',').collect();
         if address_size_parts.len() >= 2 {
-
-        let size = address_size_parts[1].parse::<usize>().unwrap();
-        let address = address_size_parts[0].to_string();
-        let decimal_address = u64::from_str_radix(address_size_parts[0], 16).unwrap();
-        let block_offset = (decimal_address & ((1 << b) - 1)) as usize;
-        let set_index = ((decimal_address >> b) & ((1 << s) - 1)) as usize;
-        let tag = (decimal_address >> (s + b)) as usize;
-
-        return Some((operation, address, size, tag, set_index, block_offset))
+            let address = u64::from_str_radix(address_size_parts[0], 16).unwrap();
+            let binary_address = format!("{:0>64b}", address);
+            let tag = usize::from_str_radix(&binary_address[..s], 2).unwrap();
+            let set_index = usize::from_str_radix(&binary_address[s..s+b], 2).unwrap();
+            
+            return Some((tag, set_index))
         }
     } 
     
     None
 }
 
-fn simulate_cache_accesses(cache: &mut Cache, memory_accesses: &[String], s: usize, b: usize) -> CacheStats{
-    let mut cache_stats = CacheStats::new(); 
+fn simulate_cache_access(cache: &mut Cache, memory_access: &str, s: usize, b: usize) -> (bool, bool) {
+    if let Some((set_index, tag)) = parse_memory_access(memory_access, s, b) {
+        // Check for hit or empty line
+        let mut found_empty_line = false;
+        let mut evict_index: Option<usize> = None;
 
-    for memory_access in memory_accesses {
-
-        if let Some((operation, address, size, tag, set_index, block_offset)) = parse_memory_access(memory_access, s, b) {
-
-            let set = &mut cache.sets[set_index];
-
-            let mut found_empty_block = false;
-            let mut evicted_block_index = 0;
-
-            for (i, line) in set.lines.iter_mut().enumerate() {
-                let block = &mut line.blocks[0];
-                if !block.valid {
-                    // load data into empty block
-                    block.tag = tag;
-                    block.valid = true;
-                    found_empty_block = true;
-                    break;
-                } else {
-                    // implement eviction policy 
-                    evicted_block_index = i;
+        // Access the lines directly using indexing
+        for index in 0..cache.sets[set_index].lines.len() {
+            let line = &mut cache.sets[set_index].lines[index]; // Borrow the line here
+            if let Some(line_tag) = line.tag {
+                if line_tag == tag {
+                    // Hit, no eviction
+                    line.last_used += 1;
+                    return (true, false);
                 }
-            }
-
-            if !found_empty_block {
-                // evict the block 
-                let evicted_block = &mut set.lines[evicted_block_index].blocks[0];
-                evicted_block.tag = tag;
-                evicted_block.valid = true;
-                cache_stats.increment_evictions();
-            }
-
-            if found_empty_block {
-                cache_stats.increment_hits();
             } else {
-                cache_stats.increment_misses();
+                // Found an empty line
+                line.tag = Some(tag);
+                line.last_used = 0; // Reset last_used for newly added line in the cache
+                found_empty_line = true;
+            }
+
+            // Find eviction candidate
+            if evict_index.is_none() || line.last_used > cache.sets[set_index].lines[evict_index.unwrap()].last_used {
+                evict_index = Some(index);
             }
         }
+
+        // If no hit and no empty line, evict LRU line
+        if !found_empty_line {
+            if let Some(evict_index) = evict_index {
+                // Evict LRU line
+                cache.sets[set_index].lines[evict_index].tag = Some(tag);
+                cache.sets[set_index].lines[evict_index].last_used = 0;
+                return (false, true); // Miss, eviction
+            }
+        }
+
+        (false, false) // Miss without eviction
+    } else {
+        // Error occurred during parsing
+        (false, false)
     }
-    cache_stats
 }
 
 pub fn main() {
@@ -197,12 +146,31 @@ pub fn main() {
     let (s, E, b, t) = parse_args(&args);
 
     // initialize the cache
-    let mut cache = Cache::new(s, E, b); 
+    let mut cache = Cache::new(s, E); 
+
 
     match read_tracefile(&t) {
         Ok(memory_accesses) => {
-            let mut cache_stats = simulate_cache_accesses(&mut cache, &memory_accesses, s, b);
-            cache_stats.print();
+
+    // Initialize counters
+    let mut hits = 0;
+    let mut misses = 0;
+    let mut evictions = 0;
+            for address in &memory_accesses {
+                // Simulate cache behavior for each memory access
+                let (hit, eviction) = simulate_cache_access(&mut cache, address, s, b);
+                if hit {
+                    hits += 1;
+                } else {
+                    misses += 1;
+                    if eviction {
+                        evictions += 1;
+                    }
+                }
+            }
+        
+            // Print results
+            println!("hits: {} misses: {} evictions: {}", hits, misses, evictions);
         }
         Err(err) => eprintln!("Error reading trace file: {}", err),
     }
