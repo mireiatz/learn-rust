@@ -3,22 +3,20 @@ use getopt::Opt;
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 struct Line {
     tag: Option<usize>,
+    is_valid: bool,
 }
 
 struct Set {
     lines: Vec<Line>,
-    lru_list: Vec<usize>,
+    lru_order: VecDeque<usize>,
 }
 
 struct Cache {
     sets: Vec<Set>,
-}
-
-struct CacheStats {
     hits: usize,
     misses: usize,
     evictions: usize,
@@ -27,37 +25,95 @@ struct CacheStats {
 impl Cache {
     // Constructor for Cache struct
     fn new(s: usize, e: usize, b: usize) -> Result<Cache, String> {
-        // Check total cache size
-    let total_cache_size = match usize::checked_pow(2, s.try_into().unwrap()).and_then(|sets| usize::checked_pow(2, b.try_into().unwrap()).and_then(|blocks| sets.checked_mul(blocks).and_then(|sets_blocks| sets_blocks.checked_mul(e)))) {
-        Some(size) => size,
-        None => {
-            return Err("cache size calculation overflowed".to_string());
-        }
-    };
+        // Calculate total cache size: 2^s * 2^b * E
+        match usize::checked_pow(2, s.try_into().unwrap()).and_then(|sets| {
+            usize::checked_pow(2, b.try_into().unwrap()).and_then(|blocks| {
+                sets.checked_mul(blocks).and_then(|sets_blocks| sets_blocks.checked_mul(e))
+            })
+        }) {
+            Some(size) => size,
+            None => { 
+                return Err("cache size exceeds available space (overflow)".to_string()); 
+            }
+        };
 
         let mut sets = Vec::with_capacity(2usize.pow(s as u32));
         for _ in 0..2usize.pow(s as u32) {
             let mut lines = Vec::with_capacity(e);
             for _ in 0..e {
-                lines.push(Line { tag: None });
+                lines.push(Line { tag: None, is_valid: false });
             }
-            sets.push(Set {
-                lines: lines,
-                lru_list: vec![0],
-            }); 
+            sets.push(Set { lines: lines, lru_order: VecDeque::new() });
         }
-        Ok(Cache { sets })
+        Ok(Cache { sets, hits: 0, misses: 0, evictions: 0 })
     }
-}
 
-impl CacheStats {
-    // Constructor for CacheStats struct
-    fn new() -> CacheStats {
-        CacheStats {
-            hits: 0,
-            misses: 0,
-            evictions: 0,
+    // Apply cache simulation logic based on operation and update cache and statistics
+    fn simulate_access(&mut self, operation: char, set_index: usize, tag: usize) -> Result<(), String> {
+        match operation {
+            'L' | 'S' => {
+                if set_index >= self.sets.len() {
+                    return Err("failed to access cache set".to_string());
+                }
+
+                let mut found_empty_line = false;
+
+                for index in 0..self.sets[set_index].lines.len() { 
+                    if index >= self.sets[set_index].lines.len() {
+                        return Err("failed to access cache line".to_string());
+                    }
+
+                    if self.sets[set_index].lines[index].is_valid {
+                        // If the line is not empty, compare the tags - if they match, it's a hit
+                        if self.sets[set_index].lines[index].tag.unwrap() == tag {
+                            self.record_hit();
+                            self.update_lru_order(set_index, index);
+                            return Ok(());
+                        }
+                    } else {
+                        // If the line is empty, the tag has not been found - it's a miss and update the line properties
+                        found_empty_line = true;
+                        self.sets[set_index].lines[index].tag = Some(tag);
+                        self.sets[set_index].lines[index].is_valid = true;
+                        self.record_miss();
+                        self.update_lru_order(set_index, index);
+                        break;
+                    }
+                }
+
+                // If no hit happened and no empty line was found, evict the LRU line - it's an eviction and update the line tag
+                if !found_empty_line {
+                    if let Some(evict_index) = self.sets[set_index].lru_order.pop_front() {
+                        self.sets[set_index].lines[evict_index].tag = Some(tag);
+                        self.record_miss();
+                        self.record_eviction();
+                        self.update_lru_order(set_index, evict_index);
+                        return Ok(());
+                    }
+                    return Err("eviction failed".to_string());
+                }
+                return Ok(());
+            }
+            'M' => {
+                // Simulate Load operation followed by Store operation
+                self.simulate_access('L', set_index, tag)?;
+                self.simulate_access('S', set_index, tag)?;
+                return Ok(());
+            }
+            _ => {
+                return Err(format!("unknown operation: {}", operation));
+            }
         }
+    }
+
+    // Update the LRU order based on the accessed line
+    fn update_lru_order(&mut self, set_index: usize, accessed_index: usize) {
+        let lru_order = &mut self.sets[set_index].lru_order;
+
+        if let Some(position) = lru_order.iter().position(|&i| i == accessed_index) { // Remove accessed_index if it exists
+            lru_order.remove(position);
+        }
+        lru_order.push_back(accessed_index); // Add accessed_index at the back
     }
 
     // Increase cache hits count
@@ -77,10 +133,7 @@ impl CacheStats {
 
     // Print cache statistics
     fn print_stats(&self) {
-        println!(
-            "hits:{} misses:{} evictions:{}",
-            self.hits, self.misses, self.evictions
-        );
+        println!("hits:{} misses:{} evictions:{}", self.hits, self.misses, self.evictions);
     }
 }
 
@@ -112,7 +165,9 @@ fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> 
                         t = val;
                     }
                     's' | 'E' | 'b' => {
-                        let param = val.parse().map_err(|e| format!("invalid value for -{} flag ({})", flag, e))?;
+                        let param = val
+                            .parse()
+                            .map_err(|e| format!("invalid value for -{} flag ({})", flag, e))?;
                         if flag == 's' {
                             s = param;
                         } else if flag == 'E' {
@@ -140,7 +195,7 @@ fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> 
     Ok((s, e, b, t))
 }
 
-// Read memory access trace file and return vector of memory accesses
+// Read memory access trace file and return memory accesses
 fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
     let file_path = format!("../{}", filename);
     let file = File::open(&file_path)?;
@@ -150,109 +205,32 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
 
 // Parse memory access string and return set index, tag, and operation
 fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option<(usize, usize, char)>, String> {
-    if memory_access.is_empty() { 
-        return Ok(None); 
+    if memory_access.is_empty() {
+        return Ok(None);
     }
     let memory_access_parts: Vec<&str> = memory_access.split_whitespace().collect();
 
-    if memory_access_parts.len() >= 2 { 
+    if memory_access_parts.len() >= 2 {
         if memory_access_parts[0] == "I" { // Skip instruction cache accesses
-            return Ok(None);
+            return Ok(None); 
         }
+
         let operation = match memory_access_parts[0] {
             "S" | "M" | "L" => memory_access_parts[0].chars().next().unwrap(),
-            _ => return Err("invalid operation encountered".to_string())
-        };        
+            _ => return Err("invalid operation encountered".to_string()),
+        };
         let address_size_parts: Vec<&str> = memory_access_parts[1].split(',').collect();
         if address_size_parts.len() >= 2 {
-            let hexadecimal_address = u64::from_str_radix(address_size_parts[0], 16)
-                .map_err(|e| format!("failed to parse address ({})", e))?;
+            let hexadecimal_address = u64::from_str_radix(address_size_parts[0], 16).map_err(|e| format!("failed to parse address ({})", e))?;
             let binary_address = format!("{:0>64b}", hexadecimal_address);
             let set_index_start = 64 - b;
             let tag_start = set_index_start - s;
-            let tag = usize::from_str_radix(&binary_address[..tag_start], 2)
-                .map_err(|e| format!("failed to parse tag ({})", e))?;
-            let set_index = usize::from_str_radix(&binary_address[tag_start..set_index_start], 2)
-                .map_err(|e| format!("failed to parse set index ({})", e))?;
+            let tag = usize::from_str_radix(&binary_address[..tag_start], 2).map_err(|e| format!("failed to parse tag ({})", e))?;
+            let set_index = usize::from_str_radix(&binary_address[tag_start..set_index_start], 2).map_err(|e| format!("failed to parse set index ({})", e))?;
             return Ok(Some((set_index, tag, operation)));
         }
     }
     Err("invalid memory access format".to_string())
-}
-
-// Update the LRU list based on the accessed line
-fn update_lru_list(cache: &mut Cache, set_index: usize, accessed_index: usize) {
-    if let Some(position) = cache.sets[set_index]
-        .lru_list
-        .iter()
-        .position(|&i| i == accessed_index)
-    {
-        cache.sets[set_index].lru_list.remove(position);
-    }
-    cache.sets[set_index].lru_list.push(accessed_index);
-}
-
-// Apply cache simulation logic based on operation and update cache and statistics
-fn simulate_cache_access(
-    cache: &mut Cache,
-    stats: &mut CacheStats,
-    operation: char,
-    set_index: usize,
-    tag: usize,
-) -> Result<(), String> {
-    match operation {
-        'L' | 'S' => {
-            let mut found_empty_line = false;
-
-            if set_index >= cache.sets.len() {
-                return Err("failed to access cache set".to_string());
-            }
-
-            for index in 0..cache.sets[set_index].lines.len() {
-                if index >= cache.sets[set_index].lines.len() {
-                    return Err("failed to access cache line".to_string());
-                }
-
-                if let Some(line_tag) = cache.sets[set_index].lines[index].tag {
-                    // If the line is not empty, compare the tags - if they match, it's a hit
-                    if line_tag == tag {
-                        stats.record_hit();
-                        update_lru_list(cache, set_index, index);
-                        return Ok(());
-                    }
-                } else {
-                    // If the line is empty, it's a miss and update tag
-                    cache.sets[set_index].lines[index].tag = Some(tag); 
-                    found_empty_line = true;
-                    stats.record_miss();
-                    update_lru_list(cache, set_index, index);
-                    break;
-                }
-            }
-
-            // If no hit happened and no empty line was found, evict the LRU line - it's an eviction and update the tag
-            if !found_empty_line {
-                if let Some(evict_index) = cache.sets[set_index].lru_list.first().cloned() {
-                    cache.sets[set_index].lines[evict_index].tag = Some(tag); 
-                    stats.record_miss();
-                    stats.record_eviction();
-                    update_lru_list(cache, set_index, evict_index);
-                    return Ok(());
-                }
-                return Err("eviction failed".to_string());
-            }
-            return Ok(());
-        }
-        'M' => {
-            // Simulate L operation followed by S operation
-            simulate_cache_access(cache, stats, 'L', set_index, tag)?;
-            simulate_cache_access(cache, stats, 'S', set_index, tag)?;
-            return Ok(());
-        }
-        _ => {
-            return Err(format!("unknown operation: {}", operation));
-        }
-    }
 }
 
 pub fn main() {
@@ -267,25 +245,26 @@ pub fn main() {
         }
     };
 
-    // Initialize the cache and stats
- let mut cache = match Cache::new(s, e, b) {
+    // Initialize the cache
+    let mut cache = match Cache::new(s, e, b) {
         Ok(c) => c,
         Err(err) => {
             eprintln!("Error initializing cache: {}", err);
             return;
         }
     };
-  let mut stats = CacheStats::new();
 
     // Read tracefile and loop through memory accesses
     match read_tracefile(&t) {
         Ok(memory_accesses) => {
             for memory_access in &memory_accesses {
 
-                // Simulate cache behaviour for each memory access
+                // Parse memory accesses
                 match parse_memory_access(memory_access, s, b) {
                     Ok(Some((set_index, tag, operation))) => {
-                        match simulate_cache_access(&mut cache, &mut stats, operation, set_index, tag) {
+
+                        // Simulate cache behaviour using memory access data
+                        match cache.simulate_access(operation, set_index, tag) {
                             Ok(_) => {}
                             Err(err) => {
                                 eprintln!("Error simulating cache access: {}", err);
@@ -293,12 +272,10 @@ pub fn main() {
                             }
                         }
                     }
-                    Ok(None) => {
-                        continue
-                    }
+                    Ok(None) => continue,
                     Err(err) => {
                         eprintln!("Error parsing memory access: {}", err);
-                        return; 
+                        return;
                     }
                 }
             }
@@ -310,5 +287,5 @@ pub fn main() {
     }
 
     // Print results
-    stats.print_stats();
+    cache.print_stats();
 }
