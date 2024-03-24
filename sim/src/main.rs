@@ -26,7 +26,15 @@ struct CacheStats {
 
 impl Cache {
     // Constructor for Cache struct
-    fn new(s: usize, e: usize) -> Cache {
+    fn new(s: usize, e: usize, b: usize) -> Result<Cache, String> {
+        // Check total cache size
+    let total_cache_size = match usize::checked_pow(2, s.try_into().unwrap()).and_then(|sets| usize::checked_pow(2, b.try_into().unwrap()).and_then(|blocks| sets.checked_mul(blocks).and_then(|sets_blocks| sets_blocks.checked_mul(e)))) {
+        Some(size) => size,
+        None => {
+            return Err("cache size calculation overflowed".to_string());
+        }
+    };
+
         let mut sets = Vec::with_capacity(2usize.pow(s as u32));
         for _ in 0..2usize.pow(s as u32) {
             let mut lines = Vec::with_capacity(e);
@@ -36,9 +44,9 @@ impl Cache {
             sets.push(Set {
                 lines: lines,
                 lru_list: vec![0],
-            });
+            }); 
         }
-        Cache { sets }
+        Ok(Cache { sets })
     }
 }
 
@@ -260,8 +268,14 @@ pub fn main() {
     };
 
     // Initialize the cache and stats
-    let mut cache = Cache::new(s, e);
-    let mut stats = CacheStats::new();
+ let mut cache = match Cache::new(s, e, b) {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("Error initializing cache: {}", err);
+            return;
+        }
+    };
+  let mut stats = CacheStats::new();
 
     // Read tracefile and loop through memory accesses
     match read_tracefile(&t) {
