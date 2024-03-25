@@ -1,21 +1,21 @@
+use std::env;
 extern crate getopt;
 use getopt::Opt;
-use std::env;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::collections::{HashMap, VecDeque};
 
-struct Line {
+pub struct Line {
     tag: Option<usize>,
     is_valid: bool,
 }
 
-struct Set {
+pub struct Set {
     lines: Vec<Line>,
     lru_order: VecDeque<usize>,
 }
 
-struct Cache {
+pub struct Cache {
     sets: Vec<Set>,
     hits: usize,
     misses: usize,
@@ -24,32 +24,42 @@ struct Cache {
 
 impl Cache {
     // Constructor for Cache struct
-    fn new(s: usize, e: usize, b: usize) -> Result<Cache, String> {
+    pub fn new(s: usize, e: usize, b: usize) -> Result<Cache, String> {
         // Calculate total cache size: 2^s * 2^b * E
         match usize::checked_pow(2, s.try_into().unwrap()).and_then(|sets| {
             usize::checked_pow(2, b.try_into().unwrap()).and_then(|blocks| {
-                sets.checked_mul(blocks).and_then(|sets_blocks| sets_blocks.checked_mul(e))
-            })
+                sets.checked_mul(blocks).and_then(|sets_blocks| sets_blocks.checked_mul(e))})
         }) {
-            Some(size) => size,
-            None => { 
-                return Err("cache size exceeds available space (overflow)".to_string()); 
+            Some(_size) => {
+                let mut sets = Vec::with_capacity(2usize.pow(s as u32));
+                for _ in 0..2usize.pow(s as u32) {
+                    let mut lines = Vec::with_capacity(e);
+                    for _ in 0..e {
+                        lines.push(Line { 
+                            tag: None, 
+                            is_valid: false 
+                        });
+                    }
+                    sets.push(Set { 
+                        lines: lines, 
+                        lru_order: VecDeque::new() 
+                    });
+                }
+                Ok(Cache { 
+                    sets, 
+                    hits: 0, 
+                    misses: 0, 
+                    evictions: 0 
+                })
             }
-        };
-
-        let mut sets = Vec::with_capacity(2usize.pow(s as u32));
-        for _ in 0..2usize.pow(s as u32) {
-            let mut lines = Vec::with_capacity(e);
-            for _ in 0..e {
-                lines.push(Line { tag: None, is_valid: false });
+            None => {
+                return Err("cache size exceeds available space (overflow)".to_string());
             }
-            sets.push(Set { lines: lines, lru_order: VecDeque::new() });
         }
-        Ok(Cache { sets, hits: 0, misses: 0, evictions: 0 })
     }
 
     // Apply cache simulation logic based on operation and update cache and statistics
-    fn simulate_access(&mut self, operation: char, set_index: usize, tag: usize) -> Result<(), String> {
+    pub fn simulate_access(&mut self, operation: char, set_index: usize, tag: usize) -> Result<(), String> {
         match operation {
             'L' | 'S' => {
                 if set_index >= self.sets.len() {
@@ -58,7 +68,7 @@ impl Cache {
 
                 let mut found_empty_line = false;
 
-                for index in 0..self.sets[set_index].lines.len() { 
+                for index in 0..self.sets[set_index].lines.len() {
                     if index >= self.sets[set_index].lines.len() {
                         return Err("failed to access cache line".to_string());
                     }
@@ -107,38 +117,38 @@ impl Cache {
     }
 
     // Update the LRU order based on the accessed line
-    fn update_lru_order(&mut self, set_index: usize, accessed_index: usize) {
+    pub fn update_lru_order(&mut self, set_index: usize, accessed_index: usize) {
         let lru_order = &mut self.sets[set_index].lru_order;
 
-        if let Some(position) = lru_order.iter().position(|&i| i == accessed_index) { // Remove accessed_index if it exists
-            lru_order.remove(position);
+        if let Some(position) = lru_order.iter().position(|&i| i == accessed_index) { 
+            lru_order.remove(position); // Remove accessed_index if it exists
         }
         lru_order.push_back(accessed_index); // Add accessed_index at the back
     }
 
     // Increase cache hits count
-    fn record_hit(&mut self) {
+    pub fn record_hit(&mut self) {
         self.hits += 1;
     }
 
     // Increase cache misses count
-    fn record_miss(&mut self) {
+    pub fn record_miss(&mut self) {
         self.misses += 1;
     }
 
     // Increase cache evictions count
-    fn record_eviction(&mut self) {
+    pub fn record_eviction(&mut self) {
         self.evictions += 1;
     }
 
     // Print cache statistics
-    fn print_stats(&self) {
+    pub fn print_stats(&self) {
         println!("hits:{} misses:{} evictions:{}", self.hits, self.misses, self.evictions);
     }
 }
 
 // Parse command-line arguments and return parameters
-fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> {
+pub fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> {
     let mut s = 0;
     let mut e = 0;
     let mut b = 0;
@@ -151,7 +161,6 @@ fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> 
     counts.insert('t', 0);
 
     let mut opts = getopt::Parser::new(args, "s:E:b:t:"); // Use getopt crate
-
     while let Some(opt) = opts.next() {
         match opt {
             Ok(Opt(flag, Some(val))) => {
@@ -160,14 +169,13 @@ fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> 
                 if *count > 1 {
                     return Err(format!("duplicate flag -{}", flag));
                 }
+
                 match flag {
                     't' => {
                         t = val;
                     }
                     's' | 'E' | 'b' => {
-                        let param = val
-                            .parse()
-                            .map_err(|e| format!("invalid value for -{} flag ({})", flag, e))?;
+                        let param = val.parse().map_err(|e| format!("invalid value for -{} flag ({})", flag, e))?;
                         if flag == 's' {
                             s = param;
                         } else if flag == 'E' {
@@ -196,7 +204,7 @@ fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> 
 }
 
 // Read memory access trace file and return memory accesses
-fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
+pub fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
     let file_path = format!("../{}", filename);
     let file = File::open(&file_path)?;
     let reader = BufReader::new(file);
@@ -204,7 +212,7 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
 }
 
 // Parse memory access string and return set index, tag, and operation
-fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option<(usize, usize, char)>, String> {
+pub fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option<(usize, usize, char)>, String> {
     if memory_access.is_empty() {
         return Ok(None);
     }
@@ -212,7 +220,7 @@ fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option
 
     if memory_access_parts.len() >= 2 {
         if memory_access_parts[0] == "I" { // Skip instruction cache accesses
-            return Ok(None); 
+            return Ok(None);
         }
 
         let operation = match memory_access_parts[0] {
@@ -258,11 +266,9 @@ pub fn main() {
     match read_tracefile(&t) {
         Ok(memory_accesses) => {
             for memory_access in &memory_accesses {
-
                 // Parse memory accesses
                 match parse_memory_access(memory_access, s, b) {
                     Ok(Some((set_index, tag, operation))) => {
-
                         // Simulate cache behaviour using memory access data
                         match cache.simulate_access(operation, set_index, tag) {
                             Ok(_) => {}
@@ -288,4 +294,397 @@ pub fn main() {
 
     // Print results
     cache.print_stats();
+}
+
+
+#[cfg(test)]
+// Tests for parse_args function
+#[test]
+fn test_parse_args_valid_input() {
+    let args = vec![
+        "program".to_string(),
+        "-s".to_string(),
+        "4".to_string(),
+        "-E".to_string(),
+        "2".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+        "-t".to_string(),
+        "test_tracefile".to_string(),
+    ];
+    assert_eq!(parse_args(&args), Ok((4, 2, 4, "test_tracefile".to_string())));
+}
+
+#[test]
+fn test_parse_args_different_order() {
+    let args = vec![
+        "program".to_string(),
+        "-t".to_string(),
+        "test_tracefile".to_string(),
+        "-E".to_string(),
+        "2".to_string(),
+        "-s".to_string(),
+        "4".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+    ];
+    assert_eq!(parse_args(&args), Ok((4, 2, 4, "test_tracefile".to_string())));
+}
+
+#[test]
+fn test_parse_args_missing_whitespace() {
+    let args = vec![
+        "program".to_string(),
+        "-t".to_string(),
+        "test_tracefile".to_string(),
+        "-E2".to_string(),
+        "-s".to_string(),
+        "4".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+    ];
+    assert_eq!(parse_args(&args), Ok((4, 2, 4, "test_tracefile".to_string())));
+}
+
+#[test]
+fn test_parse_args_missing_arguments() {
+    let args = vec![
+        "program".to_string(),
+        "-s".to_string(),
+        "4".to_string(),
+        "-E".to_string(),
+        "2".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+    ];
+    assert!(parse_args(&args).is_err());
+}
+
+#[test]
+fn test_parse_args_duplicate_flags() {
+    let args = vec![
+        "program".to_string(),
+        "-s".to_string(),
+        "4".to_string(),
+        "-s".to_string(),
+        "5".to_string(),
+        "-E".to_string(),
+        "2".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+        "-t".to_string(),
+        "test_tracefile".to_string(),
+    ];
+    assert!(parse_args(&args).is_err());
+}
+
+#[test]
+fn test_parse_args_unknown_flag() {
+    let args = vec![
+        "program".to_string(),
+        "-s".to_string(),
+        "4".to_string(),
+        "-v".to_string(),
+        "5".to_string(),
+        "-E".to_string(),
+        "2".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+        "-t".to_string(),
+        "test_tracefile".to_string(),
+    ];
+    assert!(parse_args(&args).is_err());
+}
+
+#[test]
+fn test_parse_args_invalid_values() {
+    let invalid_values = vec!["-3", "2.4", "a", "*", "0", ""];
+    for invalid_value in invalid_values {
+        let args = vec![
+            "program".to_string(),
+            "-s".to_string(),
+            "4".to_string(),
+            "-E".to_string(),
+            "2".to_string(),
+            "-b".to_string(),
+            invalid_value.to_string(),
+            "-t".to_string(),
+            "test_tracefile".to_string(),
+        ];
+        assert!(parse_args(&args).is_err());
+    }
+}
+
+#[test]
+fn test_parse_args_extra_item() {
+    let args = vec![
+        "program".to_string(),
+        "-s".to_string(),
+        "4".to_string(),
+        "-E".to_string(),
+        "2".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+        "extra".to_string(),
+        "-t".to_string(),
+        "test_tracefile".to_string(),
+    ];
+    assert!(parse_args(&args).is_err());
+}
+
+#[test]
+fn test_parse_args_case_sensitivity_to_upper() {
+    let args = vec![
+        "program".to_string(),
+        "-S".to_string(),
+        "4".to_string(),
+        "-E".to_string(),
+        "2".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+        "-t".to_string(),
+        "test_tracefile".to_string(),
+    ];
+    assert!(parse_args(&args).is_err());
+}
+
+#[test]
+fn test_parse_args_case_sensitivity_to_lower() {
+    let args = vec![
+        "program".to_string(),
+        "-s".to_string(),
+        "4".to_string(),
+        "-e".to_string(),
+        "2".to_string(),
+        "-b".to_string(),
+        "4".to_string(),
+        "-t".to_string(),
+        "test_tracefile".to_string(),
+    ];
+    assert!(parse_args(&args).is_err());
+}
+
+// Tests for read_tracefile function
+#[test]
+fn test_read_tracefile_ibm() {
+    assert!(read_tracefile("traces/ibm.trace").is_ok());
+}
+
+#[test]
+fn test_read_tracefile_long() {
+    assert!(read_tracefile("traces/long.trace").is_ok());
+}
+
+#[test]
+fn test_read_tracefile_trance() {
+    assert!(read_tracefile("traces/trans.trace").is_ok());
+}
+
+#[test]
+fn test_read_tracefile_yi() {
+    assert!(read_tracefile("traces/yi.trace").is_ok());
+}
+
+#[test]
+fn test_read_tracefile_yi2() {
+    assert!(read_tracefile("traces/yi2.trace").is_ok());
+}
+
+#[test]
+fn test_read_tracefile_test_tracefile() {
+    assert!(read_tracefile("test_tracefile").is_err());
+}
+
+// Tests for parse_memory_access function
+#[test]
+fn test_parse_memory_access_valid_input() {
+    let memory_access = "S 10,1";
+    let s = 4;
+    let b = 4;
+    assert_eq!(parse_memory_access(memory_access, s, b), Ok(Some((1, 0, 'S'))));
+}
+
+#[test]
+fn test_parse_memory_access_extra_whitespace() {
+    let memory_accesses = vec!["S      10,1", "   S 10,1", "S 10,1    "];
+    for memory_access in memory_accesses {
+        let s = 4;
+        let b = 4;
+        assert_eq!(parse_memory_access(memory_access, s, b), Ok(Some((1, 0, 'S'))));
+    }
+}
+
+#[test]
+fn test_parse_memory_access_instruction_access() {
+    let memory_access = "I 10,1";
+    let s = 4;
+    let b = 4;
+    assert_eq!(parse_memory_access(memory_access, s, b), Ok(None));
+}
+
+#[test]
+fn test_parse_memory_access_invalid_operation() {
+    let memory_access = "X 10,1";
+    let s = 4;
+    let b = 4;
+    assert!(parse_memory_access(memory_access, s, b).is_err());
+}
+
+#[test]
+fn test_parse_memory_access_invalid_format_no_whitespace() {
+    let memory_access = "S10,1";
+    let s = 4;
+    let b = 4;
+    assert!(parse_memory_access(memory_access, s, b).is_err());
+}
+
+#[test]
+fn test_parse_memory_access_invalid_format_no_size() {
+    let memory_access = "S 10";
+    let s = 4;
+    let b = 4;
+    assert!(parse_memory_access(memory_access, s, b).is_err());
+}
+
+#[test]
+fn test_parse_memory_access_invalid_format_no_comma() {
+    let memory_access = "S 10:1";
+    let s = 4;
+    let b = 4;
+    assert!(parse_memory_access(memory_access, s, b).is_err());
+}
+
+#[test]
+fn test_parse_memory_access_invalid_address_value() {
+    let memory_access = "S xyz,1";
+    let s = 4;
+    let b = 4;
+    assert!(parse_memory_access(memory_access, s, b).is_err());
+}
+
+// Test cache initilisation
+#[test]
+fn test_cache_new_valid_parameters() {
+    let s = 6;
+    let e = 2;
+    let b = 4;
+
+    match Cache::new(s, e, b) {
+        Ok(cache) => {
+            assert_eq!(cache.sets.len(), 64); 
+            for set in &cache.sets {
+                assert_eq!(set.lines.len(), e);
+
+                for line in &set.lines {
+                    assert!(!line.is_valid);
+                    assert_eq!(line.tag, None); 
+                }
+
+                assert_eq!(set.lru_order.len(), 0); 
+            }
+        }
+        Err(err) => panic!("Error testing cache: {}", err),
+    }
+}
+
+#[test]
+fn test_cache_new_invalid_size() {
+    let s = 1000;
+    let e = 16;
+    let b = 64;
+    assert!(Cache::new(s, e, b).is_err());
+}
+
+// Test for simulate_access function
+#[test]
+fn test_simulate_access_cache_hits() {
+    let mut cache = Cache::new(6, 2, 4).unwrap();
+
+    cache.sets[0].lines[0].is_valid = true;
+    cache.sets[0].lines[0].tag = Some(100);
+    cache.sets[0].lru_order.push_back(0);
+
+    assert_eq!(cache.simulate_access('L', 0, 100), Ok(()));
+    assert_eq!(cache.hits, 1);
+    assert_eq!(cache.misses, 0);
+    assert_eq!(cache.evictions, 0);
+
+    assert_eq!(cache.simulate_access('S', 0, 100), Ok(()));
+    assert_eq!(cache.hits, 2);
+    assert_eq!(cache.misses, 0);
+    assert_eq!(cache.evictions, 0);
+
+    assert_eq!(cache.simulate_access('M', 0, 100), Ok(()));
+    assert_eq!(cache.hits, 4);
+    assert_eq!(cache.misses, 0);
+    assert_eq!(cache.evictions, 0);
+}
+
+#[test]
+fn test_simulate_access_cache_misses() {
+    let mut cache = Cache::new(6, 4, 4).unwrap();
+
+    assert_eq!(cache.simulate_access('L', 0, 100), Ok(()));
+    assert_eq!(cache.hits, 0);
+    assert_eq!(cache.misses, 1);
+    assert_eq!(cache.evictions, 0);
+
+    assert_eq!(cache.simulate_access('S', 0, 200), Ok(()));
+    assert_eq!(cache.hits, 0);
+    assert_eq!(cache.misses, 2);
+    assert_eq!(cache.evictions, 0);
+
+    assert_eq!(cache.simulate_access('M', 0, 300), Ok(()));
+    assert_eq!(cache.hits, 1);
+    assert_eq!(cache.misses, 3);
+    assert_eq!(cache.evictions, 0);
+}
+
+#[test]
+fn test_simulate_access_cache_evictions() {
+    let mut cache = Cache::new(6, 1, 4).unwrap();
+
+    cache.sets[0].lines[0].is_valid = true;
+    cache.sets[0].lines[0].tag = Some(100);
+    cache.sets[0].lru_order.push_back(0);
+
+    assert_eq!(cache.simulate_access('L', 0, 200), Ok(()));
+    assert_eq!(cache.hits, 0);
+    assert_eq!(cache.misses, 1);
+    assert_eq!(cache.evictions, 1);
+
+    assert_eq!(cache.simulate_access('S', 0, 300), Ok(()));
+    assert_eq!(cache.hits, 0);
+    assert_eq!(cache.misses, 2);
+    assert_eq!(cache.evictions, 2);
+
+    assert_eq!(cache.simulate_access('M', 0, 400), Ok(()));
+    assert_eq!(cache.hits, 1);
+    assert_eq!(cache.misses, 3);
+    assert_eq!(cache.evictions, 3);
+}
+
+#[test]
+fn test_simulate_access_unknown_operation() {
+    let mut cache = Cache::new(6, 1, 4).unwrap();
+
+    assert_eq!(cache.simulate_access('X', 0, 100), Err("unknown operation: X".to_string()));
+}
+
+// Test for update_lru_order function
+#[test]
+fn test_update_lru_order() {
+    let mut cache = Cache::new(6, 2, 4).unwrap();
+
+    cache.update_lru_order(0, 1);
+    assert_eq!(cache.sets[0].lru_order, vec![1]);
+
+    cache.update_lru_order(0, 2);
+    assert_eq!(cache.sets[0].lru_order, vec![1, 2]);
+
+    cache.update_lru_order(0, 1);
+    assert_eq!(cache.sets[0].lru_order, vec![2, 1]);
+
+    cache.update_lru_order(0, 3);
+    assert_eq!(cache.sets[0].lru_order, vec![2, 1, 3]);
 }
