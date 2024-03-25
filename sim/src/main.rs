@@ -5,17 +5,17 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-pub struct Line {
+struct Line {
     tag: Option<usize>,
     is_valid: bool,
 }
 
-pub struct Set {
+struct Set {
     lines: Vec<Line>,
     lru_order: VecDeque<usize>,
 }
 
-pub struct Cache {
+struct Cache {
     sets: Vec<Set>,
     hits: usize,
     misses: usize,
@@ -24,7 +24,7 @@ pub struct Cache {
 
 impl Cache {
     // Constructor for Cache struct
-    pub fn new(s: usize, e: usize, b: usize) -> Result<Cache, String> {
+    fn new(s: usize, e: usize, b: usize) -> Result<Cache, String> {
         // Calculate total cache size: 2^s * 2^b * E
         match usize::checked_pow(2, s.try_into().unwrap()).and_then(|sets| {
             usize::checked_pow(2, b.try_into().unwrap()).and_then(|blocks| {
@@ -59,7 +59,7 @@ impl Cache {
     }
 
     // Apply cache simulation logic based on operation and update cache and statistics
-    pub fn simulate_access(&mut self, operation: char, set_index: usize, tag: usize) -> Result<(), String> {
+    fn simulate_access(&mut self, operation: char, set_index: usize, tag: usize) -> Result<(), String> {
         match operation {
             'L' | 'S' => {
                 if set_index >= self.sets.len() {
@@ -68,7 +68,7 @@ impl Cache {
 
                 let mut found_empty_line = false;
 
-                for index in 0..self.sets[set_index].lines.len() {
+                for index in 0..self.sets[set_index].lines.len() { 
                     if index >= self.sets[set_index].lines.len() {
                         return Err("failed to access cache line".to_string());
                     }
@@ -117,7 +117,7 @@ impl Cache {
     }
 
     // Update the LRU order based on the accessed line
-    pub fn update_lru_order(&mut self, set_index: usize, accessed_index: usize) {
+    fn update_lru_order(&mut self, set_index: usize, accessed_index: usize) {
         let lru_order = &mut self.sets[set_index].lru_order;
 
         if let Some(position) = lru_order.iter().position(|&i| i == accessed_index) { 
@@ -127,28 +127,28 @@ impl Cache {
     }
 
     // Increase cache hits count
-    pub fn record_hit(&mut self) {
+    fn record_hit(&mut self) {
         self.hits += 1;
     }
 
     // Increase cache misses count
-    pub fn record_miss(&mut self) {
+    fn record_miss(&mut self) {
         self.misses += 1;
     }
 
     // Increase cache evictions count
-    pub fn record_eviction(&mut self) {
+    fn record_eviction(&mut self) {
         self.evictions += 1;
     }
 
     // Print cache statistics
-    pub fn print_stats(&self) {
+    fn print_stats(&self) {
         println!("hits:{} misses:{} evictions:{}", self.hits, self.misses, self.evictions);
     }
 }
 
 // Parse command-line arguments and return parameters
-pub fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> {
+fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), String> {
     let mut s = 0;
     let mut e = 0;
     let mut b = 0;
@@ -169,7 +169,6 @@ pub fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), Stri
                 if *count > 1 {
                     return Err(format!("duplicate flag -{}", flag));
                 }
-
                 match flag {
                     't' => {
                         t = val;
@@ -204,7 +203,7 @@ pub fn parse_args(args: &[String]) -> Result<(usize, usize, usize, String), Stri
 }
 
 // Read memory access trace file and return memory accesses
-pub fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
+fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
     let file_path = format!("../{}", filename);
     let file = File::open(&file_path)?;
     let reader = BufReader::new(file);
@@ -212,7 +211,7 @@ pub fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
 }
 
 // Parse memory access string and return set index, tag, and operation
-pub fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option<(usize, usize, char)>, String> {
+fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option<(usize, usize, char)>, String> {
     if memory_access.is_empty() {
         return Ok(None);
     }
@@ -220,7 +219,7 @@ pub fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Op
 
     if memory_access_parts.len() >= 2 {
         if memory_access_parts[0] == "I" { // Skip instruction cache accesses
-            return Ok(None);
+            return Ok(None); 
         }
 
         let operation = match memory_access_parts[0] {
@@ -266,9 +265,11 @@ pub fn main() {
     match read_tracefile(&t) {
         Ok(memory_accesses) => {
             for memory_access in &memory_accesses {
+
                 // Parse memory accesses
                 match parse_memory_access(memory_access, s, b) {
                     Ok(Some((set_index, tag, operation))) => {
+
                         // Simulate cache behaviour using memory access data
                         match cache.simulate_access(operation, set_index, tag) {
                             Ok(_) => {}
