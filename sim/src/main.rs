@@ -12,7 +12,7 @@ struct Line {
 
 struct Set {
     lines: Vec<Line>,
-    lru_order: VecDeque<usize>,
+    access_order: VecDeque<usize>,
 }
 
 struct Cache {
@@ -42,7 +42,7 @@ impl Cache {
                     }
                     sets.push(Set { 
                         lines: lines, 
-                        lru_order: VecDeque::new() 
+                        access_order: VecDeque::new() 
                     });
                 }
                 Ok(Cache { 
@@ -59,7 +59,7 @@ impl Cache {
     }
 
     // Apply cache simulation logic based on operation and update cache and statistics
-    fn simulate_access(&mut self, operation: char, set_index: usize, tag: usize) -> Result<(), String> {
+    fn simulate_memory_access(&mut self, operation: char, set_index: usize, tag: usize) -> Result<(), String> {
         match operation {
             'L' | 'S' => {
                 if set_index >= self.sets.len() {
@@ -77,7 +77,7 @@ impl Cache {
                         // If the line is not empty, compare the tags - if they match, it's a hit
                         if self.sets[set_index].lines[index].tag.unwrap() == tag {
                             self.record_hit();
-                            self.update_lru_order(set_index, index);
+                            self.update_access_order(set_index, index);
                             return Ok(());
                         }
                     } else {
@@ -86,18 +86,18 @@ impl Cache {
                         self.sets[set_index].lines[index].tag = Some(tag);
                         self.sets[set_index].lines[index].is_valid = true;
                         self.record_miss();
-                        self.update_lru_order(set_index, index);
+                        self.update_access_order(set_index, index);
                         break;
                     }
                 }
 
                 // If no hit happened and no empty line was found, evict the LRU line - it's an eviction and update the line tag
                 if !found_empty_line {
-                    if let Some(evict_index) = self.sets[set_index].lru_order.pop_front() {
+                    if let Some(evict_index) = self.sets[set_index].access_order.pop_back() {
                         self.sets[set_index].lines[evict_index].tag = Some(tag);
                         self.record_miss();
                         self.record_eviction();
-                        self.update_lru_order(set_index, evict_index);
+                        self.update_access_order(set_index, evict_index);
                         return Ok(());
                     }
                     return Err("eviction failed".to_string());
@@ -106,8 +106,8 @@ impl Cache {
             }
             'M' => {
                 // Simulate Load operation followed by Store operation
-                self.simulate_access('L', set_index, tag)?;
-                self.simulate_access('S', set_index, tag)?;
+                self.simulate_memory_access('L', set_index, tag)?;
+                self.simulate_memory_access('S', set_index, tag)?;
                 return Ok(());
             }
             _ => {
@@ -117,13 +117,13 @@ impl Cache {
     }
 
     // Update the LRU order based on the accessed line
-    fn update_lru_order(&mut self, set_index: usize, accessed_index: usize) {
-        let lru_order = &mut self.sets[set_index].lru_order;
+    fn update_access_order(&mut self, set_index: usize, accessed_index: usize) {
+        let access_order = &mut self.sets[set_index].access_order;
 
-        if let Some(position) = lru_order.iter().position(|&i| i == accessed_index) { 
-            lru_order.remove(position); // Remove accessed_index if it exists
+        if let Some(position) = access_order.iter().position(|&i| i == accessed_index) { 
+            access_order.remove(position); // Remove accessed_index if it exists
         }
-        lru_order.push_back(accessed_index); // Add accessed_index at the back
+        access_order.push_front(accessed_index); // Add accessed_index at the back
     }
 
     // Increase cache hits count
@@ -211,7 +211,7 @@ fn read_tracefile(filename: &str) -> Result<Vec<String>, std::io::Error> {
 }
 
 // Parse memory access string and return set index, tag, and operation
-fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option<(usize, usize, char)>, String> {
+fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option<(char, usize, usize)>, String> {
     if memory_access.is_empty() {
         return Ok(None);
     }
@@ -234,7 +234,7 @@ fn parse_memory_access(memory_access: &str, s: usize, b: usize) -> Result<Option
             let tag_start = set_index_start - s;
             let tag = usize::from_str_radix(&binary_address[..tag_start], 2).map_err(|e| format!("failed to parse tag ({})", e))?;
             let set_index = usize::from_str_radix(&binary_address[tag_start..set_index_start], 2).map_err(|e| format!("failed to parse set index ({})", e))?;
-            return Ok(Some((set_index, tag, operation)));
+            return Ok(Some((operation, set_index, tag)));
         }
     }
     Err("invalid memory access format".to_string())
@@ -268,10 +268,10 @@ pub fn main() {
 
                 // Parse memory accesses
                 match parse_memory_access(memory_access, s, b) {
-                    Ok(Some((set_index, tag, operation))) => {
+                    Ok(Some((operation, set_index, tag))) => {
 
                         // Simulate cache behaviour using memory access data
-                        match cache.simulate_access(operation, set_index, tag) {
+                        match cache.simulate_memory_access(operation, set_index, tag) {
                             Ok(_) => {}
                             Err(err) => {
                                 eprintln!("Error simulating cache access: {}", err);
@@ -468,7 +468,65 @@ fn test_parse_args_case_sensitivity_to_lower() {
 // Tests for read_tracefile function
 #[test]
 fn test_read_tracefile_ibm() {
-    assert!(read_tracefile("traces/ibm.trace").is_ok());
+    let expected_contents = vec![
+       " L 10,4 ", 
+       " S 18,4",
+       " L 20,4",
+       " S 28,4",
+       " S 50,4",
+    ];
+    let result = read_tracefile("traces/ibm.trace");
+    assert!(result.is_ok());
+
+    let actual_contents = result.unwrap();
+    assert_eq!(actual_contents, expected_contents);
+}
+
+#[test]
+fn test_read_tracefile_yi() {
+    let expected_contents = vec![
+        " L 10,1",
+        " M 20,1",
+        " L 22,1",
+        " S 18,1",
+        " L 110,1",
+        " L 210,1",
+        " M 12,1",
+    ];
+
+    let result = read_tracefile("traces/yi.trace");
+    assert!(result.is_ok());
+
+    let actual_contents = result.unwrap();
+    assert_eq!(actual_contents, expected_contents);
+}
+
+#[test]
+fn test_read_tracefile_yi2() {
+    let expected_contents = vec![
+        " L 0,1",
+        " L 1,1",
+        " L 2,1",
+        " L 3,1",
+        " S 4,1",
+        " L 5,1",
+        " S 6,1",
+        " L 7,1",
+        " S 8,1",
+        " L 9,1",
+        " S a,1",
+        " L b,1",
+        " S c,1",
+        " L d,1",
+        " S e,1",
+        " M f,1",
+    ];
+
+    let result = read_tracefile("traces/yi2.trace");
+    assert!(result.is_ok());
+
+    let actual_contents = result.unwrap();
+    assert_eq!(actual_contents, expected_contents);
 }
 
 #[test]
@@ -482,16 +540,6 @@ fn test_read_tracefile_trance() {
 }
 
 #[test]
-fn test_read_tracefile_yi() {
-    assert!(read_tracefile("traces/yi.trace").is_ok());
-}
-
-#[test]
-fn test_read_tracefile_yi2() {
-    assert!(read_tracefile("traces/yi2.trace").is_ok());
-}
-
-#[test]
 fn test_read_tracefile_test_tracefile() {
     assert!(read_tracefile("test_tracefile").is_err());
 }
@@ -502,7 +550,7 @@ fn test_parse_memory_access_valid_input() {
     let memory_access = "S 10,1";
     let s = 4;
     let b = 4;
-    assert_eq!(parse_memory_access(memory_access, s, b), Ok(Some((1, 0, 'S'))));
+    assert_eq!(parse_memory_access(memory_access, s, b), Ok(Some(('S', 1, 0))));
 }
 
 #[test]
@@ -511,7 +559,7 @@ fn test_parse_memory_access_extra_whitespace() {
     for memory_access in memory_accesses {
         let s = 4;
         let b = 4;
-        assert_eq!(parse_memory_access(memory_access, s, b), Ok(Some((1, 0, 'S'))));
+        assert_eq!(parse_memory_access(memory_access, s, b), Ok(Some(('S', 1, 0))));
     }
 }
 
@@ -581,7 +629,7 @@ fn test_cache_new_valid_parameters() {
                     assert_eq!(line.tag, None); 
                 }
 
-                assert_eq!(set.lru_order.len(), 0); 
+                assert_eq!(set.access_order.len(), 0); 
             }
         }
         Err(err) => panic!("Error testing cache: {}", err),
@@ -596,96 +644,96 @@ fn test_cache_new_invalid_size() {
     assert!(Cache::new(s, e, b).is_err());
 }
 
-// Test for simulate_access function
+// Test for simulate_memory_access function
 #[test]
-fn test_simulate_access_cache_hits() {
+fn test_simulate_memory_access_cache_hits() {
     let mut cache = Cache::new(6, 2, 4).unwrap();
 
     cache.sets[0].lines[0].is_valid = true;
     cache.sets[0].lines[0].tag = Some(100);
-    cache.sets[0].lru_order.push_back(0);
+    cache.sets[0].access_order.push_back(0);
 
-    assert_eq!(cache.simulate_access('L', 0, 100), Ok(()));
+    assert_eq!(cache.simulate_memory_access('L', 0, 100), Ok(()));
     assert_eq!(cache.hits, 1);
     assert_eq!(cache.misses, 0);
     assert_eq!(cache.evictions, 0);
 
-    assert_eq!(cache.simulate_access('S', 0, 100), Ok(()));
+    assert_eq!(cache.simulate_memory_access('S', 0, 100), Ok(()));
     assert_eq!(cache.hits, 2);
     assert_eq!(cache.misses, 0);
     assert_eq!(cache.evictions, 0);
 
-    assert_eq!(cache.simulate_access('M', 0, 100), Ok(()));
+    assert_eq!(cache.simulate_memory_access('M', 0, 100), Ok(()));
     assert_eq!(cache.hits, 4);
     assert_eq!(cache.misses, 0);
     assert_eq!(cache.evictions, 0);
 }
 
 #[test]
-fn test_simulate_access_cache_misses() {
+fn test_simulate_memory_access_cache_misses() {
     let mut cache = Cache::new(6, 4, 4).unwrap();
 
-    assert_eq!(cache.simulate_access('L', 0, 100), Ok(()));
+    assert_eq!(cache.simulate_memory_access('L', 0, 100), Ok(()));
     assert_eq!(cache.hits, 0);
     assert_eq!(cache.misses, 1);
     assert_eq!(cache.evictions, 0);
 
-    assert_eq!(cache.simulate_access('S', 0, 200), Ok(()));
+    assert_eq!(cache.simulate_memory_access('S', 0, 200), Ok(()));
     assert_eq!(cache.hits, 0);
     assert_eq!(cache.misses, 2);
     assert_eq!(cache.evictions, 0);
 
-    assert_eq!(cache.simulate_access('M', 0, 300), Ok(()));
+    assert_eq!(cache.simulate_memory_access('M', 0, 300), Ok(()));
     assert_eq!(cache.hits, 1);
     assert_eq!(cache.misses, 3);
     assert_eq!(cache.evictions, 0);
 }
 
 #[test]
-fn test_simulate_access_cache_evictions() {
+fn test_simulate_memory_access_cache_evictions() {
     let mut cache = Cache::new(6, 1, 4).unwrap();
 
     cache.sets[0].lines[0].is_valid = true;
     cache.sets[0].lines[0].tag = Some(100);
-    cache.sets[0].lru_order.push_back(0);
+    cache.sets[0].access_order.push_back(0);
 
-    assert_eq!(cache.simulate_access('L', 0, 200), Ok(()));
+    assert_eq!(cache.simulate_memory_access('L', 0, 200), Ok(()));
     assert_eq!(cache.hits, 0);
     assert_eq!(cache.misses, 1);
     assert_eq!(cache.evictions, 1);
 
-    assert_eq!(cache.simulate_access('S', 0, 300), Ok(()));
+    assert_eq!(cache.simulate_memory_access('S', 0, 300), Ok(()));
     assert_eq!(cache.hits, 0);
     assert_eq!(cache.misses, 2);
     assert_eq!(cache.evictions, 2);
 
-    assert_eq!(cache.simulate_access('M', 0, 400), Ok(()));
+    assert_eq!(cache.simulate_memory_access('M', 0, 400), Ok(()));
     assert_eq!(cache.hits, 1);
     assert_eq!(cache.misses, 3);
     assert_eq!(cache.evictions, 3);
 }
 
 #[test]
-fn test_simulate_access_unknown_operation() {
+fn test_simulate_memory_access_unknown_operation() {
     let mut cache = Cache::new(6, 1, 4).unwrap();
 
-    assert_eq!(cache.simulate_access('X', 0, 100), Err("unknown operation: X".to_string()));
+    assert_eq!(cache.simulate_memory_access('X', 0, 100), Err("unknown operation: X".to_string()));
 }
 
-// Test for update_lru_order function
+// Test for update_access_order function
 #[test]
-fn test_update_lru_order() {
+fn test_update_access_order() {
     let mut cache = Cache::new(6, 2, 4).unwrap();
 
-    cache.update_lru_order(0, 1);
-    assert_eq!(cache.sets[0].lru_order, vec![1]);
+    cache.update_access_order(0, 1);
+    assert_eq!(cache.sets[0].access_order, vec![1]);
 
-    cache.update_lru_order(0, 2);
-    assert_eq!(cache.sets[0].lru_order, vec![1, 2]);
+    cache.update_access_order(0, 2);
+    assert_eq!(cache.sets[0].access_order, vec![2, 1]);
+ 
+    cache.update_access_order(0, 1);
+    assert_eq!(cache.sets[0].access_order, vec![1, 2]);
 
-    cache.update_lru_order(0, 1);
-    assert_eq!(cache.sets[0].lru_order, vec![2, 1]);
-
-    cache.update_lru_order(0, 3);
-    assert_eq!(cache.sets[0].lru_order, vec![2, 1, 3]);
+    cache.update_access_order(0, 3);
+    assert_eq!(cache.sets[0].access_order, vec![3, 1, 2]);
 }
